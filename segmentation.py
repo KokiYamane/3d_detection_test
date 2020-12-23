@@ -7,7 +7,14 @@ from tqdm import tqdm
 
 def segmentation(image):
     ret, thresh = cv2.threshold(
-        image, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+        image, 0, 1, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+
+    # add outline
+    laplacian = cv2.Laplacian(image, cv2.CV_8U, ksize=5)
+    ret, line = cv2.threshold(
+        laplacian, 0, 1, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+    line = cv2.medianBlur(line, ksize=3)
+    thresh = cv2.bitwise_or(thresh, thresh, mask=line)
 
     # noise removal
     kernel = np.ones((3, 3), np.uint8)
@@ -16,14 +23,17 @@ def segmentation(image):
     # sure background area
     sure_bg = cv2.dilate(opening, kernel, iterations=3)
 
-    dist_transform = cv2.distanceTransform(opening, cv2.DIST_L2, 5)
+    # make distance image
+    tmp = cv2.convertScaleAbs(opening, alpha=(255))
+    dist_transform = cv2.distanceTransform(tmp, cv2.DIST_L2, 5)
 
     # Finding sure foreground area
     ret, sure_fg = cv2.threshold(
-        dist_transform, 0.05 * dist_transform.max(), 255, 0)
+        dist_transform, 0.05 * dist_transform.max(), 1, 0)
 
     # Finding unknown region
     sure_fg = np.uint8(sure_fg)
+    sure_bg = np.uint8(sure_bg)
     unknown = cv2.subtract(sure_bg, sure_fg)
 
     # Marker labelling
@@ -35,7 +45,8 @@ def segmentation(image):
     # Now, mark the region of unknown with zero
     markers[unknown == 255] = 0
 
-    color = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
+    tmp = cv2.convertScaleAbs(image, alpha=(255 / 65535))
+    color = cv2.cvtColor(tmp, cv2.COLOR_GRAY2BGR)
     markers = cv2.watershed(color, markers)
 
     return markers
@@ -65,30 +76,39 @@ class AnimationMaker():
 
 if __name__ == '__main__':
     import pathlib
+    # import copy
 
     filename_list = list(pathlib.Path(
         'data/20201219_073658/depth').glob('*.png'))
-    # for p in filename_list:
-    #     print(p.name)
 
-    # image = cv2.imread('data/20201219_073658/depth/depth023307409300.png', 0)
-
-    fig, ax = plt.subplots(1, 2, figsize=(12, 6))
-    ax[0].set_title('image')
-    ax[1].set_title('segmentation')
+    # fig, ax = plt.subplots(1, 2, figsize=(12, 6))
+    # ax[0].set_title('image')
+    # ax[1].set_title('segmentation')
 
     # image_list = []
     # markers_list = []
     for filename in tqdm(filename_list):
-        image = cv2.imread('data/20201219_073658/depth/' + filename.name, 0)
+        image = cv2.imread(
+            'data/20201219_073658/depth/{}'.format(filename.name),
+            cv2.IMREAD_ANYDEPTH)
+        # image = cv2.convertScaleAbs(image, alpha=(255 / 65535))
         markers = segmentation(image)
+        # markers_origin = copy.deepcopy(markers)
+
+        markers_color = cv2.convertScaleAbs(
+            markers, alpha=(255 / np.max(markers)))
+        markers_color = cv2.applyColorMap(markers_color, cv2.COLORMAP_RAINBOW)
+        markers_color[markers == 1] = [0, 0, 0]
+        # markers_color[markers == 1] = [255, 255, 255]
+        cv2.imwrite('tmp/{}'.format(filename.name), markers_color)
 
         # image_list.append(image)
         # markers_list.append(markers)
 
-        ax[0].imshow(image, cmap='jet')
-        ax[1].imshow(markers, cmap='tab20')
-        plt.pause(0.02)
+        # ax[0].imshow(image)
+        # ax[1].imshow(markers, cmap='tab20')
+        # # plt.pause(0.02)
+        # plt.savefig('tmp/{}'.format(filename.name))
 
     # ani = AnimationMaker(image_list, markers_list).makeAnimation()
     # ani.save('animation.gif', writer='pillow')
